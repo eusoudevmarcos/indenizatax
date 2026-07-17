@@ -19,6 +19,13 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 from rules import classify_rubric
 
 
+def _read_dataframe(conn, sql: str, params: Optional[list[Any]] = None) -> pd.DataFrame:
+    if bool(getattr(conn, "is_postgres", False)):
+        rows = conn.execute(sql, params or []).fetchall()
+        return pd.DataFrame(rows)
+    return pd.read_sql_query(sql, conn, params=params)
+
+
 def _where_company(company_id: Optional[int]) -> tuple[str, list[Any]]:
     if company_id:
         return "WHERE r.company_id = ?", [company_id]
@@ -66,7 +73,7 @@ def load_analytic(conn: sqlite3.Connection, rules: Dict[str, Any], company_id: O
         {where}
         ORDER BY r.ano, r.mes, r.cod_rubr, r.cpf_trab
     """
-    df = pd.read_sql_query(sql, conn, params=params)
+    df = _read_dataframe(conn, sql, params)
     if df.empty:
         return df
 
@@ -212,8 +219,7 @@ def load_payment_summary(conn: sqlite3.Connection, company_id: Optional[int] = N
         if bool(getattr(conn, "is_postgres", False))
         else "GROUP_CONCAT(DISTINCT SUBSTR(p.dt_pgto, 1, 7))"
     )
-    return pd.read_sql_query(
-        f"""
+    sql = f"""
         SELECT
             p.company_id,
             p.per_apur AS periodo_apurado,
@@ -226,10 +232,8 @@ def load_payment_summary(conn: sqlite3.Connection, company_id: Optional[int] = N
         {where}
         GROUP BY p.company_id, p.per_apur
         ORDER BY p.per_apur
-        """,
-        conn,
-        params=params,
-    )
+        """
+    return _read_dataframe(conn, sql, params)
 
 
 def summarize_by_rubric(df: pd.DataFrame) -> pd.DataFrame:
@@ -340,8 +344,7 @@ def load_rubrics(conn: sqlite3.Connection, company_id: Optional[int] = None) -> 
     if company_id:
         where = "WHERE rb.company_id = ?"
         params.append(company_id)
-    return pd.read_sql_query(
-        f"""
+    sql = f"""
         SELECT
             e.tp_insc,
             e.nr_insc,
@@ -352,24 +355,20 @@ def load_rubrics(conn: sqlite3.Connection, company_id: Optional[int] = None) -> 
         JOIN empresas e ON e.id = rb.company_id
         {where}
         ORDER BY rb.nat_rubr, rb.cod_rubr
-        """,
-        conn,
-        params=params,
-    )
+        """
+    return _read_dataframe(conn, sql, params)
 
 
 def load_imports(conn: sqlite3.Connection) -> pd.DataFrame:
-    return pd.read_sql_query(
-        """
+    sql = """
         SELECT ai.imported_at, ai.filename, ai.event_type, e.nr_insc, e.cnpj_completo,
                COALESCE(e.razao_social, 'Empresa CNPJ base ' || e.nr_insc) AS razao_social,
                ai.qtd_rubricas, ai.qtd_remuneracoes, ai.qtd_pagamentos, ai.warnings
         FROM arquivos_importados ai
         LEFT JOIN empresas e ON e.id = ai.company_id
         ORDER BY ai.imported_at DESC
-        """,
-        conn,
-    )
+        """
+    return _read_dataframe(conn, sql)
 
 
 def to_excel_bytes(sheets: Dict[str, pd.DataFrame]) -> bytes:
