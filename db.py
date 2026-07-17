@@ -384,6 +384,15 @@ def already_imported(conn: sqlite3.Connection, sha256: str) -> bool:
     return row is not None
 
 
+def table_counts(conn) -> Dict[str, int]:
+    tables = ["empresas", "arquivos_importados", "rubricas", "remuneracoes", "pagamentos"]
+    counts: Dict[str, int] = {}
+    for table in tables:
+        row = conn.execute(f"SELECT COUNT(*) AS total FROM {table}").fetchone()
+        counts[table] = int(row["total"] or 0) if row else 0
+    return counts
+
+
 def save_import(conn: sqlite3.Connection, parsed: ParsedESocialFile) -> Dict[str, Any]:
     if already_imported(conn, parsed.sha256):
         return {

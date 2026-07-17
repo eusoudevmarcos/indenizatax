@@ -8,7 +8,7 @@ import zipfile
 import pandas as pd
 import streamlit as st
 
-from db import connect, list_companies, save_import, update_company_name
+from db import connect, list_companies, save_import, table_counts, update_company_name
 from esocial_parser import parse_esocial_xml
 from reports import (
     add_credit_estimate,
@@ -324,6 +324,20 @@ with import_tab:
         """,
         unsafe_allow_html=True,
     )
+    counts = table_counts(conn)
+    d1, d2, d3, d4, d5 = st.columns(5)
+    d1.metric("Empresas", format_int(counts["empresas"]))
+    d2.metric("Arquivos", format_int(counts["arquivos_importados"]))
+    d3.metric("Rubricas", format_int(counts["rubricas"]))
+    d4.metric("Remunerações", format_int(counts["remuneracoes"]))
+    d5.metric("Pagamentos", format_int(counts["pagamentos"]))
+
+    if counts["arquivos_importados"] > 0 and counts["remuneracoes"] == 0:
+        st.warning(
+            "Os arquivos foram registrados, mas ainda não há remunerações na base. "
+            "Para as abas analíticas funcionarem, importe eventos de folha como S-1200, S-2299 ou S-2399."
+        )
+
     uploaded_files = st.file_uploader(
         "Arquivos XML ou ZIP",
         type=["xml", "zip"],
