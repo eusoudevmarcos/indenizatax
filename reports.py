@@ -565,3 +565,160 @@ def to_perdcomp_simple_pdf_bytes(monthly: pd.DataFrame) -> bytes:
 
     doc.build(story)
     return output.getvalue()
+
+
+def to_retification_dossier_pdf_bytes(analytic: pd.DataFrame, estimated_rate_percent: float) -> bytes:
+    output = BytesIO()
+    doc = SimpleDocTemplate(
+        output,
+        pagesize=A4,
+        rightMargin=1.1 * cm,
+        leftMargin=1.1 * cm,
+        topMargin=1.1 * cm,
+        bottomMargin=1.1 * cm,
+    )
+    styles = getSampleStyleSheet()
+    story: list[Any] = [
+        Paragraph("Dossie para retificacao eSocial - Passo B", styles["Title"]),
+        Paragraph(
+            "Use este relatorio como roteiro operacional para revisar S-1010, retificar eventos de remuneracao/rescisao "
+            "e retransmitir DCTFWeb antes de gerar a PER/DCOMP.",
+            styles["Normal"],
+        ),
+        Spacer(1, 0.25 * cm),
+    ]
+
+    if analytic.empty or "valor_base_questionado" not in analytic.columns:
+        story.append(Paragraph("Nenhum lancamento com credito estimado foi encontrado nos filtros atuais.", styles["Normal"]))
+        doc.build(story)
+        return output.getvalue()
+
+    data = analytic.copy()
+    data["valor_base_questionado"] = pd.to_numeric(data["valor_base_questionado"], errors="coerce").fillna(0.0)
+    data["credito_estimado"] = pd.to_numeric(data["credito_estimado"], errors="coerce").fillna(0.0)
+    data["vr_rubr"] = pd.to_numeric(data["vr_rubr"], errors="coerce").fillna(0.0)
+    data = data[data["valor_base_questionado"] > 0].copy()
+
+    if data.empty:
+        story.append(Paragraph("Nenhuma rubrica com base questionada foi encontrada nos filtros atuais.", styles["Normal"]))
+        doc.build(story)
+        return output.getvalue()
+
+    group_cols = [
+        "razao_social",
+        "cnpj_completo",
+        "ano",
+        "mes",
+        "per_apur",
+        "cod_rubr",
+        "ide_tab_rubr",
+        "dsc_rubr",
+        "nat_rubr",
+        "cod_inc_cp",
+        "status_analise",
+        "motivo_analise",
+    ]
+    rubric_month = (
+        data.groupby(group_cols, dropna=False)
+        .agg(
+            valor_pago=("vr_rubr", "sum"),
+            valor_base_questionada=("valor_base_questionado", "sum"),
+            credito_estimado=("credito_estimado", "sum"),
+            trabalhadores=("cpf_trab", pd.Series.nunique),
+            lancamentos=("vr_rubr", "count"),
+            eventos=("event_type", lambda s: ", ".join(sorted({str(v) for v in s.dropna().unique()}))),
+        )
+        .reset_index()
+    )
+    rubric_month["_mes_ordem"] = pd.to_numeric(rubric_month["mes"], errors="coerce").fillna(99)
+    total_credit = rubric_month["credito_estimado"].sum()
+    total_base = rubric_month["valor_base_questionada"].sum()
+
+    story.append(Paragraph(f"<b>Base questionada total:</b> {_br_money(total_base)}", styles["Heading3"]))
+    story.append(Paragraph(f"<b>Credito estimado total:</b> {_br_money(total_credit)}", styles["Heading3"]))
+    story.append(Paragraph(f"<b>Aliquota estimada usada:</b> {float(estimated_rate_percent):.2f}%", styles["Normal"]))
+    story.append(Spacer(1, 0.25 * cm))
+
+    steps = [
+        "1. Conferir a natureza da rubrica e o codIncCP vigente no S-1010.",
+        "2. Se a incidencia estiver incorreta, ajustar/retificar o S-1010 da tabela aplicavel.",
+        "3. Retificar os eventos de folha que usaram a rubrica na competencia: S-1200, S-2299 ou S-2399.",
+        "4. Fechar/retransmitir os eventos periodicos quando necessario.",
+        "5. Transmitir a DCTFWeb retificadora e conferir a reducao do debito.",
+    ]
+    story.append(Paragraph("<b>Roteiro do passo B por competencia</b>", styles["Heading3"]))
+    for step in steps:
+        story.append(Paragraph(step, styles["Normal"]))
+    story.append(Spacer(1, 0.25 * cm))
+
+    for (company_name, cnpj), company_df in rubric_month.groupby(["razao_social", "cnpj_completo"], dropna=False):
+        story.append(Paragraph(f"Empresa: {company_name or 'Empresa sem nome'}", styles["Heading2"]))
+        story.append(Paragraph(f"CNPJ: {_format_cnpj(cnpj)}", styles["Normal"]))
+        story.append(Spacer(1, 0.15 * cm))
+
+        for year in sorted(company_df["ano"].dropna().unique()):
+            year_df = company_df[company_df["ano"] == year].copy()
+            story.append(Paragraph(f"Ano apurado {year}", styles["Heading3"]))
+            for period in year_df.sort_values(["_mes_ordem", "per_apur"])["per_apur"].dropna().unique():
+                period_df = year_df[year_df["per_apur"] == period].copy()
+                period_base = period_df["valor_base_questionada"].sum()
+                period_credit = period_df["credito_estimado"].sum()
+                story.append(
+                    Paragraph(
+                        f"Competencia {period} - Base {_br_money(period_base)} - Credito {_br_money(period_credit)}",
+                        styles["Heading4"],
+                    )
+                )
+                table_rows = [[
+                    "Rubrica",
+                    "Descricao",
+                    "Nat",
+                    "Inc CP",
+                    "Evento",
+                    "Base",
+                    "Credito",
+                    "Acao",
+                ]]
+                period_df = period_df.sort_values(["credito_estimado", "cod_rubr"], ascending=[False, True])
+                for _, item in period_df.iterrows():
+                    action_text = (
+                        "Revisar S-1010 e retificar evento de folha"
+                        if str(item.get("status_analise") or "") == "REVISAR_NOMENCLATURA_BASE_CP"
+                        else "Retificar incidencia/base da rubrica"
+                    )
+                    table_rows.append(
+                        [
+                            Paragraph(str(item.get("cod_rubr") or "-"), styles["BodyText"]),
+                            Paragraph(str(item.get("dsc_rubr") or "-"), styles["BodyText"]),
+                            str(item.get("nat_rubr") or "-"),
+                            str(item.get("cod_inc_cp") or "-"),
+                            str(item.get("eventos") or "-"),
+                            _br_money(item.get("valor_base_questionada")),
+                            _br_money(item.get("credito_estimado")),
+                            Paragraph(action_text, styles["BodyText"]),
+                        ]
+                    )
+                table = Table(
+                    table_rows,
+                    colWidths=[1.55 * cm, 4.0 * cm, 1.2 * cm, 1.25 * cm, 1.4 * cm, 2.15 * cm, 2.15 * cm, 3.0 * cm],
+                    repeatRows=1,
+                )
+                table.setStyle(
+                    TableStyle(
+                        [
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F2937")),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                            ("FONTSIZE", (0, 0), (-1, -1), 7),
+                            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D1D5DB")),
+                            ("ALIGN", (5, 1), (6, -1), "RIGHT"),
+                            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F9FAFB")]),
+                        ]
+                    )
+                )
+                story.append(table)
+                story.append(Spacer(1, 0.25 * cm))
+
+    doc.build(story)
+    return output.getvalue()

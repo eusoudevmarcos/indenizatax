@@ -24,6 +24,7 @@ from reports import (
     to_excel_bytes,
     to_perdcomp_simple_excel_bytes,
     to_perdcomp_simple_pdf_bytes,
+    to_retification_dossier_pdf_bytes,
 )
 from rules import DEFAULT_RULES_PATH, classify_rubric, load_rules, save_rules
 
@@ -514,9 +515,9 @@ with annual_tab:
         c3.metric("Base questionada", money(total_base))
         c4.metric("Crédito estimado", money(total_credit))
 
-        st.markdown("#### Relatório simplificado para PER/DCOMP")
-        st.caption("Arquivo enxuto com empresa, CNPJ, crédito total, ano apurado e crédito mês a mês.")
-        report_col1, report_col2 = st.columns([1, 1])
+        st.markdown("#### Relatórios para apuração e retificação")
+        st.caption("Use o dossiê de retificação para executar o passo B: revisar rubricas por competência e retificar eSocial/DCTFWeb.")
+        report_col1, report_col2, report_col3 = st.columns([1, 1, 1.25])
         report_col1.download_button(
             "Baixar Excel simplificado",
             to_perdcomp_simple_excel_bytes(credit_monthly),
@@ -527,6 +528,12 @@ with annual_tab:
             "Baixar PDF simplificado",
             to_perdcomp_simple_pdf_bytes(credit_monthly),
             file_name="relatorio_perdcomp_simplificado.pdf",
+            mime="application/pdf",
+        )
+        report_col3.download_button(
+            "Baixar dossiê retificação PDF",
+            to_retification_dossier_pdf_bytes(analytic_filtered, rate),
+            file_name="dossie_retificacao_esocial_passo_b.pdf",
             mime="application/pdf",
         )
 
