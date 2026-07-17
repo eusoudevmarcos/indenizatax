@@ -515,26 +515,37 @@ def save_import(conn: sqlite3.Connection, parsed: ParsedESocialFile) -> Dict[str
 
     update_company_cnpj_from_items(conn, company_id, parsed.remuneration_items)
 
-    conn.execute(
-        """
-        INSERT INTO arquivos_importados (
-            sha256, filename, event_type, company_id, qtd_rubricas, qtd_remuneracoes,
-            qtd_pagamentos, warnings, imported_at
+    try:
+        conn.execute(
+            """
+            INSERT INTO arquivos_importados (
+                sha256, filename, event_type, company_id, qtd_rubricas, qtd_remuneracoes,
+                qtd_pagamentos, warnings, imported_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                parsed.sha256,
+                parsed.filename,
+                parsed.event_type,
+                company_id,
+                len(parsed.rubrics),
+                len(parsed.remuneration_items),
+                len(parsed.payments),
+                " | ".join(parsed.warnings),
+                now,
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            parsed.sha256,
-            parsed.filename,
-            parsed.event_type,
-            company_id,
-            len(parsed.rubrics),
-            len(parsed.remuneration_items),
-            len(parsed.payments),
-            " | ".join(parsed.warnings),
-            now,
-        ),
-    )
+    except Exception as exc:
+        if exc.__class__.__name__ == "UniqueViolation" or "arquivos_importados_sha256" in str(exc):
+            conn.rollback()
+            return {
+                "filename": parsed.filename,
+                "event_type": parsed.event_type,
+                "status": "ignorado",
+                "message": "Arquivo já importado anteriormente (mesmo SHA-256).",
+            }
+        raise
     conn.commit()
 
     return {
