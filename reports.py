@@ -207,12 +207,17 @@ def load_payment_summary(conn: sqlite3.Connection, company_id: Optional[int] = N
     if company_id:
         where = "WHERE p.company_id = ?"
         params.append(company_id)
+    payment_periods_sql = (
+        "STRING_AGG(DISTINCT SUBSTR(p.dt_pgto, 1, 7), ',')"
+        if bool(getattr(conn, "is_postgres", False))
+        else "GROUP_CONCAT(DISTINCT SUBSTR(p.dt_pgto, 1, 7))"
+    )
     return pd.read_sql_query(
         f"""
         SELECT
             p.company_id,
             p.per_apur AS periodo_apurado,
-            GROUP_CONCAT(DISTINCT SUBSTR(p.dt_pgto, 1, 7)) AS periodos_pagamento,
+            {payment_periods_sql} AS periodos_pagamento,
             MIN(p.dt_pgto) AS primeira_data_pagamento,
             MAX(p.dt_pgto) AS ultima_data_pagamento,
             SUM(COALESCE(p.vr_liq, 0)) AS valor_liquido_pago_s1210,

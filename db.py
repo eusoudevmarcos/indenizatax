@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 import sqlite3
@@ -10,7 +11,96 @@ import sqlite3
 from esocial_parser import ParsedESocialFile
 
 
-def connect(db_path: str | Path = "data/esocial.db") -> sqlite3.Connection:
+def _translate_sql(sql: str) -> str:
+    return sql.replace("?", "%s")
+
+
+class _PostgresDirectCursor:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    @property
+    def description(self):
+        return self._cursor.description
+
+    def _row_to_dict(self, row):
+        if row is None:
+            return None
+        columns = [col.name for col in self._cursor.description]
+        return {columns[index]: value for index, value in enumerate(row)}
+
+    def fetchone(self):
+        return self._row_to_dict(self._cursor.fetchone())
+
+    def fetchall(self):
+        return [self._row_to_dict(row) for row in self._cursor.fetchall()]
+
+
+class _PostgresPandasCursor:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    @property
+    def description(self):
+        if self._cursor.description is None:
+            return None
+        return [(col.name, None, None, None, None, None, None) for col in self._cursor.description]
+
+    def execute(self, sql: str, params=None):
+        self._cursor.execute(_translate_sql(sql), params or ())
+        return self
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    def close(self):
+        self._cursor.close()
+
+
+class PostgresConnection:
+    is_postgres = True
+
+    def __init__(self, raw):
+        self.raw = raw
+
+    def execute(self, sql: str, params=None):
+        cursor = self.raw.cursor()
+        cursor.execute(_translate_sql(sql), params or ())
+        return _PostgresDirectCursor(cursor)
+
+    def cursor(self):
+        return _PostgresPandasCursor(self.raw.cursor())
+
+    def executescript(self, script: str) -> None:
+        for statement in script.split(";"):
+            sql = statement.strip()
+            if not sql or sql.upper().startswith("PRAGMA "):
+                continue
+            self.execute(sql)
+
+    def commit(self) -> None:
+        self.raw.commit()
+
+    def rollback(self) -> None:
+        self.raw.rollback()
+
+    def close(self) -> None:
+        self.raw.close()
+
+
+def connect(db_path: str | Path = "data/esocial.db"):
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        import psycopg
+
+        raw = psycopg.connect(database_url)
+        conn = PostgresConnection(raw)
+        init_db(conn)
+        return conn
+
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
@@ -19,7 +109,124 @@ def connect(db_path: str | Path = "data/esocial.db") -> sqlite3.Connection:
     return conn
 
 
-def init_db(conn: sqlite3.Connection) -> None:
+def _is_postgres(conn) -> bool:
+    return bool(getattr(conn, "is_postgres", False))
+
+
+def _column_exists(conn, table_name: str, column_name: str) -> bool:
+    if _is_postgres(conn):
+        row = conn.execute(
+            """
+            SELECT 1 AS exists
+            FROM information_schema.columns
+            WHERE table_name = ? AND column_name = ?
+            """,
+            (table_name, column_name),
+        ).fetchone()
+        return row is not None
+    existing_columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    return column_name in existing_columns
+
+
+def init_db(conn) -> None:
+    if _is_postgres(conn):
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS empresas (
+                id SERIAL PRIMARY KEY,
+                tp_insc TEXT,
+                nr_insc TEXT,
+                cnpj_completo TEXT,
+                razao_social TEXT,
+                class_trib TEXT,
+                ind_des_folha TEXT,
+                event_type_origin TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(tp_insc, nr_insc)
+            );
+
+            CREATE TABLE IF NOT EXISTS arquivos_importados (
+                id SERIAL PRIMARY KEY,
+                sha256 TEXT NOT NULL UNIQUE,
+                filename TEXT NOT NULL,
+                event_type TEXT,
+                company_id INTEGER,
+                qtd_rubricas INTEGER DEFAULT 0,
+                qtd_remuneracoes INTEGER DEFAULT 0,
+                qtd_pagamentos INTEGER DEFAULT 0,
+                warnings TEXT,
+                imported_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES empresas(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS rubricas (
+                id SERIAL PRIMARY KEY,
+                company_id INTEGER NOT NULL,
+                operacao TEXT,
+                cod_rubr TEXT,
+                ide_tab_rubr TEXT,
+                ini_valid TEXT,
+                fim_valid TEXT,
+                dsc_rubr TEXT,
+                nat_rubr TEXT,
+                tp_rubr TEXT,
+                cod_inc_cp TEXT,
+                cod_inc_irrf TEXT,
+                cod_inc_fgts TEXT,
+                cod_inc_sind TEXT,
+                observacao TEXT,
+                source_file TEXT,
+                imported_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES empresas(id),
+                UNIQUE(company_id, cod_rubr, ide_tab_rubr, ini_valid)
+            );
+
+            CREATE TABLE IF NOT EXISTS remuneracoes (
+                id SERIAL PRIMARY KEY,
+                company_id INTEGER NOT NULL,
+                event_type TEXT,
+                per_apur TEXT,
+                ano TEXT,
+                mes TEXT,
+                cpf_trab TEXT,
+                matricula TEXT,
+                cod_categ TEXT,
+                ide_dm_dev TEXT,
+                cod_rubr TEXT,
+                ide_tab_rubr TEXT,
+                qtd_rubr REAL,
+                fator_rubr REAL,
+                vr_rubr REAL,
+                ind_apur_ir TEXT,
+                tp_insc_estab TEXT,
+                nr_insc_estab TEXT,
+                cod_lotacao TEXT,
+                source_file TEXT,
+                imported_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES empresas(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS pagamentos (
+                id SERIAL PRIMARY KEY,
+                company_id INTEGER NOT NULL,
+                per_apur TEXT,
+                cpf_trab TEXT,
+                ide_dm_dev TEXT,
+                per_ref TEXT,
+                dt_pgto TEXT,
+                vr_liq REAL,
+                source_file TEXT,
+                imported_at TEXT NOT NULL,
+                FOREIGN KEY(company_id) REFERENCES empresas(id)
+            );
+            """
+        )
+        if not _column_exists(conn, "empresas", "cnpj_completo"):
+            conn.execute("ALTER TABLE empresas ADD COLUMN cnpj_completo TEXT")
+        conn.commit()
+        return
+
     conn.executescript(
         """
         PRAGMA foreign_keys = ON;
@@ -114,8 +321,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
-    existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(empresas)").fetchall()}
-    if "cnpj_completo" not in existing_columns:
+    if not _column_exists(conn, "empresas", "cnpj_completo"):
         conn.execute("ALTER TABLE empresas ADD COLUMN cnpj_completo TEXT")
     conn.commit()
 
