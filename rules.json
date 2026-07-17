@@ -1,0 +1,61 @@
+{
+  "descricao": "Regras iniciais e editáveis para triagem de verbas potencialmente indenizatórias/não remuneratórias no eSocial. Não substitui validação fiscal/jurídica.",
+  "candidate_natures": {
+    "1023": "Férias - abono pecuniário",
+    "1041": "Licença-prêmio indenizada",
+    "1406": "Auxílio-creche / reembolso creche",
+    "1410": "Auxílio - locais de difícil acesso",
+    "1411": "Auxílio-natalidade",
+    "1602": "Ajuda de custo de transferência",
+    "1603": "Ajuda de custo",
+    "1619": "Ajuda compensatória",
+    "1620": "Ressarcimento uso de veículo próprio",
+    "1621": "Ressarcimento despesas de viagem",
+    "1623": "Ressarcimento de provisão",
+    "1629": "Ressarcimento de outras despesas",
+    "1650": "Diárias de viagem",
+    "1799": "Alimentação em pecúnia com caráter indenizatório",
+    "1810": "Vale-transporte / auxílio-transporte com caráter indenizatório",
+    "1899": "Outros auxílios",
+    "2902": "Vestuário e equipamentos",
+    "2920": "Reembolsos diversos",
+    "6003": "Indenização compensatória do aviso prévio",
+    "6101": "Indenização compensatória - multa rescisória",
+    "6102": "Indenização art. 9º Lei 7.238/1984",
+    "6103": "Indenização art. 14 Lei 5.889/1973",
+    "6104": "Indenização art. 479 da CLT",
+    "6105": "Indenização incentivo à demissão / PDV",
+    "6106": "Multa art. 477 da CLT",
+    "6107": "Indenização por quebra de estabilidade",
+    "6119": "Indenização rescisória - Programa Emergencial",
+    "6129": "Outras verbas não remuneratórias, indenizatórias ou multas"
+  },
+  "candidate_keywords": [
+    "indeniza",
+    "indeniz",
+    "reembolso",
+    "ressarc",
+    "ajuda de custo",
+    "auxilio creche",
+    "auxílio creche",
+    "diaria",
+    "diária",
+    "aviso previo indenizado",
+    "aviso prévio indenizado",
+    "multa rescisoria",
+    "multa rescisória",
+    "abono pecuniario",
+    "abono pecuniário",
+    "licenca premio",
+    "licença-prêmio",
+    "pdv"
+  ],
+  "non_incidence_cp_codes": [
+    "00",
+    "01"
+  ],
+  "suspended_or_process_cp_prefixes": [
+    "9"
+  ],
+  "default_estimated_rate_percent": 20.0
+}
